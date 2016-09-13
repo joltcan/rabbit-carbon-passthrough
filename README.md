@@ -8,23 +8,5 @@ This is a simple service that connects to a RabbitMQ broker, subscribes to the s
 
 ## Example
 
-The following example will consume messages from a queue (`marketing.customer.created`). When a messages is published, go-passthrough will start a new process, invoke `handler.php` which in turn will dump the message to a file.
+The following example will consume messages from a queue and send it to a carbon writer instance. Multiple queues can be defined. See config.yml.example for details.
 
-config.yml
-```yml
-rabbit:
-  connectionString: amqp://vagrant:vagrant@192.168.50.2:5672/
-  queues:
-    - marketing.customer.created
-
-command:
-  proc: php
-  args: -f handle.php
-```
-
-handler.php
-```php
-<?php
-$data = file_get_contents("php://stdin");
-file_put_contents(rand() . "test.txt", $data);
-```
