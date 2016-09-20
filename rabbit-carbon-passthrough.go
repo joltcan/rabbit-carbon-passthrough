@@ -2,9 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/mailgun/graphite-golang"
-	//"github.com/mitchellh/mapstructure"
 	"github.com/caarlos0/env"
+	"github.com/mailgun/graphite-golang"
 	"github.com/op/go-logging"
 	"github.com/streadway/amqp"
 	"net/http"
@@ -18,33 +17,13 @@ var format = logging.MustStringFormatter(
 	`%{color}%{time:15:04:05.000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}`,
 )
 
-// Config represents the main YAML configuration
-/*
-type Config struct {
-	Rabbit struct {
-		ConnectionString string   `yaml:"connectionString"`
-		ConsumerTag      string   `yaml:"consumerTag"`
-		Queues           []string `yaml:"queues"`
-		Ack              bool     `yaml:"ack"`
-	}
-
-	HTTP struct {
-		Address string `yaml:"address"`
-	}
-
-	Graphite struct {
-		Host string `yaml:"host"`
-		Port int    `yaml:"port"`
-	}
-}
-*/
-
 type Config struct {
 	RabbitURI    string   `env:"RABBIT_URI"`
 	RabbitTag    string   `env:"RABBIT_TAG"`
 	RabbitQueues []string `env:"RABBIT_QUEUES" envSeparator:":"`
 	RabbitAck    bool     `env:"RABBIT_ACK" envDefault:false`
 
+	ExitErrors   int64  `env:"EXIT_ERRORS" envDefault:10`
 	StatusListen string `env:"STATUS_LISTEN" envDefault:"0.0.0.0:8082"`
 
 	GraphiteHost  string `env:"GRAPHITE_HOST" envDefault:"localhost"`
@@ -70,7 +49,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	log.Info("Rabbit-Carbon Passthrough starting")
+	log.Info("Rabbit-carbon cassthrough starting")
 	config := Config{}
 	env.Parse(&config)
 	if config.RabbitURI == "" {
@@ -80,23 +59,23 @@ func main() {
 
 	conn, err := amqp.Dial(config.RabbitURI)
 	if err != nil {
-		log.Critical("error: could not connect: %s", err)
+		log.Criticalf("Could not connect to rabbit: %s", err)
 	}
 
 	defer conn.Close()
 
 	ch, err := conn.Channel()
 	if err != nil {
-		log.Critical("error: could not open channel: %s\n", err)
+		log.Criticalf("Could not open channel: %s\n", err)
 	}
 
-	log.Error("Could not connect, exiting")
 	g, err := graphite.NewGraphite(config.GraphiteHost, config.GraphitePort)
 	if err != nil {
-		log.Error("Could not connect, exiting")
+		log.Error("Could not connect to graphite, exiting")
 		os.Exit(1)
 	}
 
+	// initiate stats values
 	stats = make(map[string]int64)
 	stats["ok"] = 0
 	stats["errors"] = 0
@@ -106,7 +85,7 @@ func main() {
 	go func() {
 		log.Infof("HTTP endpoint accepting requests on http://%s", config.StatusListen)
 		if err := http.ListenAndServe(config.StatusListen, nil); err != nil {
-			log.Infof("warning: could not start HTTP endpoint (specified address: %s)", config.StatusListen)
+			log.Warningf("Could not start HTTP endpoint (specified address: %s)", config.StatusListen)
 		}
 	}()
 
@@ -114,7 +93,7 @@ func main() {
 	for _, queue := range config.RabbitQueues {
 		msgs, err := ch.Consume(queue, config.RabbitTag, false, false, false, false, nil)
 		if err != nil {
-			log.Critical("error: could not subscribe: ", err)
+			log.Criticalf("Could not subscribe to queue: %s", err)
 		}
 
 		log.Infof("Bound to queue %s", queue)
@@ -122,6 +101,7 @@ func main() {
 		go func() {
 			for m := range msgs {
 				//log.Infof("Received message: %s", m.Body)
+				// separate rabbit packet data
 				s := string(m.Body[:])
 				r := strings.Fields(s)
 
@@ -131,7 +111,7 @@ func main() {
 
 				timestamp, err := strconv.ParseInt(r[2], 10, 64)
 				if err != nil {
-					log.Errorf("Could not convert %s", err)
+					log.Warningf("Could not convert packet %s", err)
 				}
 
 				if len(r) > 3 {
@@ -145,12 +125,15 @@ func main() {
 					stats["errors"]++
 				} else {
 					if config.RabbitAck {
-						m.Ack(false) // dont ack since it removes the entry from the queue
+						// if RabbitAck is true,this removes the message from the queue
+						m.Ack(false)
 					}
 					stats["ok"]++
 				}
 
-				if stats["errors"] > 10 {
+				// if there are more than configured numbers of errors, exit the process to let outside
+				// environment handle restart/reconnects.
+				if stats["errors"] > config.ExitErrors {
 					os.Exit(1)
 				}
 			}
