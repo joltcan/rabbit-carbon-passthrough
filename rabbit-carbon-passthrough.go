@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"github.com/mailgun/graphite-golang"
 	//"github.com/mitchellh/mapstructure"
+	"github.com/caarlos0/env"
 	"github.com/op/go-logging"
 	"github.com/streadway/amqp"
-	"gopkg.in/yaml.v2"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
@@ -20,6 +19,7 @@ var format = logging.MustStringFormatter(
 )
 
 // Config represents the main YAML configuration
+/*
 type Config struct {
 	Rabbit struct {
 		ConnectionString string   `yaml:"connectionString"`
@@ -37,6 +37,20 @@ type Config struct {
 		Port int    `yaml:"port"`
 	}
 }
+*/
+
+type Config struct {
+	RabbitURI    string   `env:"RABBIT_URI"`
+	RabbitTag    string   `env:"RABBIT_TAG"`
+	RabbitQueues []string `env:"RABBIT_QUEUES" envSeparator:":"`
+	RabbitAck    bool     `env:"RABBIT_ACK" envDefault:false`
+
+	StatusListen string `env:"STATUS_LISTEN" envDefault:"0.0.0.0:8082"`
+
+	GraphiteHost  string `env:"GRAPHITE_HOST" envDefault:"localhost"`
+	GraphitePort  int    `env:"GRAPHITE_PORT" envDefault:"2003"`
+	GraphiteWrite bool   `env:"GRAPHITE_WRITE" envDefault:false`
+}
 
 var (
 	config Config
@@ -50,19 +64,6 @@ type metricData struct {
 	timestamp int64
 }
 
-// loads config.yml into the global config object
-func loadConfig() {
-	buffer, err := ioutil.ReadFile("config.yml")
-	if err != nil {
-		log.Error("error: could not open config.yml: %s", err)
-	}
-
-	err = yaml.Unmarshal(buffer, &config)
-	if err != nil {
-		log.Critical("error: could not deserialize config.yml: %s", err)
-	}
-}
-
 // http status endpoint
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
@@ -70,9 +71,14 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	log.Info("Rabbit-Carbon Passthrough starting")
-	loadConfig()
+	config := Config{}
+	env.Parse(&config)
+	if config.RabbitURI == "" {
+		log.Errorf("No config found in ENVIRONMENT")
+		os.Exit(1)
+	}
 
-	conn, err := amqp.Dial(config.Rabbit.ConnectionString)
+	conn, err := amqp.Dial(config.RabbitURI)
 	if err != nil {
 		log.Critical("error: could not connect: %s", err)
 	}
@@ -84,7 +90,8 @@ func main() {
 		log.Critical("error: could not open channel: %s\n", err)
 	}
 
-	g, err := graphite.NewGraphite(config.Graphite.Host, config.Graphite.Port)
+	log.Error("Could not connect, exiting")
+	g, err := graphite.NewGraphite(config.GraphiteHost, config.GraphitePort)
 	if err != nil {
 		log.Error("Could not connect, exiting")
 		os.Exit(1)
@@ -97,15 +104,15 @@ func main() {
 	// start HTTP endpoint
 	http.HandleFunc("/status", statusHandler)
 	go func() {
-		log.Infof("HTTP endpoint accepting requests on http://%s", config.HTTP.Address)
-		if err := http.ListenAndServe(config.HTTP.Address, nil); err != nil {
-			log.Infof("warning: could not start HTTP endpoint (specified address: %s)", config.HTTP.Address)
+		log.Infof("HTTP endpoint accepting requests on http://%s", config.StatusListen)
+		if err := http.ListenAndServe(config.StatusListen, nil); err != nil {
+			log.Infof("warning: could not start HTTP endpoint (specified address: %s)", config.StatusListen)
 		}
 	}()
 
 	// start a coroutine for each queue
-	for _, queue := range config.Rabbit.Queues {
-		msgs, err := ch.Consume(queue, config.Rabbit.ConsumerTag, false, false, false, false, nil)
+	for _, queue := range config.RabbitQueues {
+		msgs, err := ch.Consume(queue, config.RabbitTag, false, false, false, false, nil)
 		if err != nil {
 			log.Critical("error: could not subscribe: ", err)
 		}
@@ -137,7 +144,7 @@ func main() {
 				if err := g.SendMetric(message); err != nil {
 					stats["errors"]++
 				} else {
-					if config.Rabbit.Ack {
+					if config.RabbitAck {
 						m.Ack(false) // dont ack since it removes the entry from the queue
 					}
 					stats["ok"]++
