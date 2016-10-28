@@ -9,7 +9,7 @@ This is a simple service that connects to a RabbitMQ broker, subscribes to the s
 ## Example
 
 
-```RABBIT_URI="amqp://<user>:<password>@<rabbithost>:5672/" RABBIT_TAG="rabbit-carbon-passthrough@<myhost>" RABBIT_QUEUES="frelun" ./rabbit-carbon-passthrough ```
+```RABBIT_URI="amqp://<user>:<password>@<rabbithost>:5672/" RABBIT_TAG="rabbit-carbon-passthrough@<myhost>" RABBIT_QUEUES="logging" ./rabbit-carbon-passthrough ```
 
 ### Settings
 * RABBIT_URI = The URI to the rabbit.
@@ -23,6 +23,5 @@ This is a simple service that connects to a RabbitMQ broker, subscribes to the s
 * GRAPHITE_HOST = Default host to send graphite data to. Default localhost.
 * GRAPHITE_PORT = Default graphite port. Default 2003
 * GRAPHITE_WRITE = Actually send messages to the graphite host. Default false.
-*
 
 
