@@ -49,7 +49,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	log.Info("Rabbit-carbon cassthrough starting")
+	log.Info("Rabbit-carbon passthrough starting")
 	config := Config{}
 	env.Parse(&config)
 	if config.RabbitURI == "" {
@@ -74,6 +74,7 @@ func main() {
 		log.Error("Could not connect to graphite, exiting")
 		os.Exit(1)
 	}
+	log.Infof("Connected to graphite at %s:%d", config.GraphiteHost, config.GraphitePort)
 
 	// initiate stats values
 	stats = make(map[string]int64)
@@ -134,6 +135,7 @@ func main() {
 				// if there are more than configured numbers of errors, exit the process to let outside
 				// environment handle restart/reconnects.
 				if stats["errors"] > config.ExitErrors {
+					log.Errorf("Too many errors, exiting!")
 					os.Exit(1)
 				}
 			}
@@ -141,4 +143,5 @@ func main() {
 	}
 
 	<-waiter
+	// exit carbon nicely
 }
